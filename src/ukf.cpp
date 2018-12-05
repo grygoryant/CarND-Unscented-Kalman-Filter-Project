@@ -8,7 +8,7 @@
  */
 UKF::UKF() {
   // if this is false, laser measurements will be ignored (except during init)
-  use_laser_ = false;
+  use_laser_ = true;
 
   // if this is false, radar measurements will be ignored (except during init)
   use_radar_ = true;
@@ -48,14 +48,7 @@ UKF::UKF() {
   // Radar measurement noise standard deviation radius change in m/s
   std_radrd_ = 0.3;
   //DO NOT MODIFY measurement noise values above these are provided by the sensor manufacturer.
-  
-  /**
-  TODO:
 
-  Complete the initialization. See ukf.h for other member properties.
-
-  Hint: one or more values initialized above might be wildly off...
-  */
   Xsig_pred_ = eig_mat(n_x_, 2 * n_aug_ + 1);
 
   weights_ = eig_vec(2 * n_aug_ + 1);
@@ -78,8 +71,13 @@ void UKF::ProcessMeasurement(MeasurementPackage meas_package) {
     // first measurement
     if (meas_package.sensor_type_ == MeasurementPackage::RADAR)
     {
-      x_ << meas_package.raw_measurements_[0] * cos(meas_package.raw_measurements_[1]),
-          meas_package.raw_measurements_[0] * sin(meas_package.raw_measurements_[1]), 0, 0, 0;
+      double rho = meas_package.raw_measurements_[0];
+      double phi = meas_package.raw_measurements_[1];
+      double rho_dot = meas_package.raw_measurements_[2];
+      double vx = rho_dot * cos(phi);
+      double vy = rho_dot * sin(phi);
+      x_ << rho * cos(phi),
+          rho * sin(phi), sqrt(vx * vx + vy * vy), 0, 0;
     }
     else if (meas_package.sensor_type_ == MeasurementPackage::LASER)
     {
@@ -125,28 +123,22 @@ void UKF::Prediction(double delta_t) {
  * @param {MeasurementPackage} meas_package
  */
 void UKF::UpdateLidar(MeasurementPackage meas_package) {
-  /**
-  TODO:
+  auto z_pred = eig_vec(n_z_laser_);
+  auto S = eig_mat(n_z_laser_ , n_z_laser_);
+  auto Zsig = eig_mat(n_z_laser_, 2 * n_aug_ + 1);
+  GenLaserMeasSigPoints(Zsig);
+  PredictLaserMeasurement(Zsig, z_pred, S);
 
-  Complete this function! Use lidar data to update the belief about the object's
-  position. Modify the state vector, x_, and covariance, P_.
+  auto Tc = eig_mat(n_x_, n_z_laser_);
+  
+  UpdateCommon(meas_package, z_pred, S, Zsig, Tc);
 
-  You'll also need to calculate the lidar NIS.
-  */
+  // TODO: Laser NIS
 }
 
-/**
- * Updates the state and the state covariance matrix using a radar measurement.
- * @param {MeasurementPackage} meas_package
- */
-void UKF::UpdateRadar(MeasurementPackage meas_package) {
-  auto z_pred = eig_vec(n_z_radar_);
-  auto S = eig_mat(n_z_radar_ , n_z_radar_);
-  auto Zsig = eig_mat(n_z_radar_, 2 * n_aug_ + 1);
-  GenRadarMeasSigPoints(Zsig);
-  PredictRadarMeasurement(Zsig, z_pred, S);
+void UKF::UpdateCommon(const MeasurementPackage& meas_package,
+  const eig_mat& z_pred, const eig_mat& S, const eig_mat& Zsig, eig_mat& Tc) {
 
-  auto Tc = eig_mat(n_x_, n_z_radar_);
   Tc.fill(0.0);
   for(int i = 0; i < 2 * n_aug_ + 1; i++)
   {
@@ -176,6 +168,22 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
   //update state mean and covariance matrix
   x_ = x_ + K * z_diff;
   P_ = P_ - K*S*K.transpose();
+}
+
+/**
+ * Updates the state and the state covariance matrix using a radar measurement.
+ * @param {MeasurementPackage} meas_package
+ */
+void UKF::UpdateRadar(MeasurementPackage meas_package) {
+  auto z_pred = eig_vec(n_z_radar_);
+  auto S = eig_mat(n_z_radar_ , n_z_radar_);
+  auto Zsig = eig_mat(n_z_radar_, 2 * n_aug_ + 1);
+  GenRadarMeasSigPoints(Zsig);
+  PredictRadarMeasurement(Zsig, z_pred, S);
+
+  auto Tc = eig_mat(n_x_, n_z_radar_);
+  
+  UpdateCommon(meas_package, z_pred, S, Zsig, Tc);
 
   // TODO: Radar NIS
 }
@@ -281,6 +289,17 @@ void UKF::GenRadarMeasSigPoints(eig_mat& z_sig) {
   }
 }
 
+void UKF::GenLaserMeasSigPoints(eig_mat& z_sig) {
+  for(int i = 0; i < 2 * n_aug_ + 1; ++i)
+  {
+    double px = Xsig_pred_(0, i);
+    double py = Xsig_pred_(1, i);
+
+    z_sig(0, i) = px;
+    z_sig(1, i) = py;
+  }
+}
+
 void UKF::PredictRadarMeasurement(const eig_mat& z_sig, eig_vec& z_pred, eig_mat& S) {
   //calculate mean predicted measurement
   z_pred.fill(0.0);
@@ -307,5 +326,33 @@ void UKF::PredictRadarMeasurement(const eig_mat& z_sig, eig_vec& z_pred, eig_mat
   R << std_radr_*std_radr_, 0, 0,
       0, std_radphi_*std_radphi_, 0,
       0, 0,std_radrd_*std_radrd_;
+  S = S + R;
+}
+
+void UKF::PredictLaserMeasurement(const eig_mat& z_sig, eig_vec& z_pred, eig_mat& S) {
+  //calculate mean predicted measurement
+  z_pred.fill(0.0);
+  for (int i = 0; i < 2 * n_aug_ + 1; i++)
+  {
+      z_pred = z_pred + weights_(i) * z_sig.col(i);
+  }
+  
+  //calculate innovation covariance matrix S
+  S.fill(0.0);
+  for (int i = 0; i < 2 * n_aug_ + 1; i++)
+  { 
+    //residual
+    eig_vec z_diff = z_sig.col(i) - z_pred;
+
+    //angle normalization
+    while (z_diff(1)> M_PI) z_diff(1)-=2.*M_PI;
+    while (z_diff(1)<-M_PI) z_diff(1)+=2.*M_PI;
+
+    S = S + weights_(i) * z_diff * z_diff.transpose();
+  }
+  
+  auto R = eig_mat(n_z_laser_, n_z_laser_);
+  R << std_laspx_*std_laspx_, 0,
+      0, std_laspy_*std_laspy_;
   S = S + R;
 }

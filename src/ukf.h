@@ -87,6 +87,9 @@ public:
    */
   void ProcessMeasurement(MeasurementPackage meas_package);
 
+  void UpdateCommon(const MeasurementPackage& meas_package,
+    const eig_mat& z_pred, const eig_mat& S, const eig_mat& Zsig, eig_mat& Tc);
+
   void GenAugmentedSigmaPoints(eig_mat& aug_sigma_points);
   void PredictSigmaPoints(const eig_mat& aug_sigma_points, double delta_t);
   void PredictStateMean();
@@ -104,14 +107,16 @@ public:
    * @param meas_package The measurement at k+1
    */
   void UpdateLidar(MeasurementPackage meas_package);
+  void GenLaserMeasSigPoints(eig_mat& z_sig);
+  void PredictLaserMeasurement(const eig_mat& z_sig, eig_vec& z_pred, eig_mat& S);
 
-  void GenRadarMeasSigPoints(eig_mat& z_sig);
-  void PredictRadarMeasurement(const eig_mat& z_sig, eig_vec& z_pred, eig_mat& S);
   /**
    * Updates the state and the state covariance matrix using a radar measurement
    * @param meas_package The measurement at k+1
    */
   void UpdateRadar(MeasurementPackage meas_package);
+  void GenRadarMeasSigPoints(eig_mat& z_sig);
+  void PredictRadarMeasurement(const eig_mat& z_sig, eig_vec& z_pred, eig_mat& S);
 };
 
 #endif /* UKF_H */
