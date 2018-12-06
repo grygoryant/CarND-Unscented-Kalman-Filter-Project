@@ -70,6 +70,12 @@ public:
   ///* Sigma point spreading parameter
   double lambda_;
 
+  eig_mat R_laser_;
+  eig_mat R_radar_;
+
+  double NIS_laser_;
+  double NIS_radar_;
+
 
   /**
    * Constructor
@@ -88,12 +94,14 @@ public:
   void ProcessMeasurement(MeasurementPackage meas_package);
 
   void UpdateCommon(const MeasurementPackage& meas_package,
-    const eig_mat& z_pred, const eig_mat& S, const eig_mat& Zsig, eig_mat& Tc);
+    const eig_mat& z_pred, const eig_mat& S, const eig_mat& Zsig, 
+    eig_mat& Tc, eig_vec& z_diff);
 
   void GenAugmentedSigmaPoints(eig_mat& aug_sigma_points);
   void PredictSigmaPoints(const eig_mat& aug_sigma_points, double delta_t);
   void PredictStateMean();
   void PredictStateCovariance();
+  void CalcInnovCovMat(const eig_mat& z_sig, eig_vec& z_pred, eig_mat& S);
 
   /**
    * Prediction Predicts sigma points, the state, and the state covariance

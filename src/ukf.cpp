@@ -57,6 +57,15 @@ UKF::UKF() {
   {
       weights_(i) = 1/(2 * (lambda_ + n_aug_));
   }
+
+  R_laser_ = eig_mat(n_z_laser_, n_z_laser_);
+  R_laser_ << std_laspx_*std_laspx_, 0,
+      0, std_laspy_*std_laspy_;
+
+  R_radar_ = eig_mat(n_z_radar_, n_z_radar_);
+  R_radar_ << std_radr_*std_radr_, 0, 0,
+      0, std_radphi_*std_radphi_, 0,
+      0, 0,std_radrd_*std_radrd_;
 }
 
 UKF::~UKF() {}
@@ -130,19 +139,22 @@ void UKF::UpdateLidar(MeasurementPackage meas_package) {
   PredictLaserMeasurement(Zsig, z_pred, S);
 
   auto Tc = eig_mat(n_x_, n_z_laser_);
-  
-  UpdateCommon(meas_package, z_pred, S, Zsig, Tc);
+  eig_vec z_diff = eig_vec::Zero(n_z_laser_);
 
-  // TODO: Laser NIS
+  UpdateCommon(meas_package, z_pred, S, Zsig, Tc, z_diff);
+
+  NIS_laser_ = z_diff.transpose() * S.inverse() * z_diff;
+  std::cout << "NIS_L = " << NIS_laser_ << std::endl;
 }
 
 void UKF::UpdateCommon(const MeasurementPackage& meas_package,
-  const eig_mat& z_pred, const eig_mat& S, const eig_mat& Zsig, eig_mat& Tc) {
+  const eig_mat& z_pred, const eig_mat& S, const eig_mat& Zsig, 
+  eig_mat& Tc, eig_vec& z_diff) {
 
   Tc.fill(0.0);
   for(int i = 0; i < 2 * n_aug_ + 1; i++)
   {
-    eig_vec z_diff = Zsig.col(i) - z_pred;
+    z_diff = Zsig.col(i) - z_pred;
     //angle normalization
     while (z_diff(1)> M_PI) z_diff(1)-=2.*M_PI;
     while (z_diff(1)<-M_PI) z_diff(1)+=2.*M_PI;
@@ -159,7 +171,7 @@ void UKF::UpdateCommon(const MeasurementPackage& meas_package,
   eig_mat K = Tc * S.inverse();
 
   //residual
-  eig_vec z_diff = meas_package.raw_measurements_ - z_pred;
+  z_diff = meas_package.raw_measurements_ - z_pred;
 
   //angle normalization
   while (z_diff(1)> M_PI) z_diff(1)-=2.*M_PI;
@@ -182,10 +194,12 @@ void UKF::UpdateRadar(MeasurementPackage meas_package) {
   PredictRadarMeasurement(Zsig, z_pred, S);
 
   auto Tc = eig_mat(n_x_, n_z_radar_);
-  
-  UpdateCommon(meas_package, z_pred, S, Zsig, Tc);
+  eig_vec z_diff = eig_vec::Zero(n_z_radar_);
 
-  // TODO: Radar NIS
+  UpdateCommon(meas_package, z_pred, S, Zsig, Tc, z_diff);
+
+  NIS_radar_ = z_diff.transpose() * S.inverse() * z_diff;
+  std::cout << "NIS_R = " << NIS_radar_ << std::endl;
 }
 
 void UKF::GenAugmentedSigmaPoints(eig_mat& aug_sigma_points) {
@@ -279,7 +293,7 @@ void UKF::GenRadarMeasSigPoints(eig_mat& z_sig) {
     double psy = Xsig_pred_(3, i);
     double psy_dot = Xsig_pred_(4, i);
     
-    double rho = sqrt(px * px + py * py);
+    double rho = sqrt(px * px + py * py) + 0.000001; // edding small value to avoid division by zero
     double phi = atan2(py, px);
     double rho_dot = (px*cos(psy)*v + py*sin(psy)*v)/rho;
     
@@ -301,35 +315,18 @@ void UKF::GenLaserMeasSigPoints(eig_mat& z_sig) {
 }
 
 void UKF::PredictRadarMeasurement(const eig_mat& z_sig, eig_vec& z_pred, eig_mat& S) {
-  //calculate mean predicted measurement
-  z_pred.fill(0.0);
-  for (int i = 0; i < 2 * n_aug_ + 1; i++)
-  {
-      z_pred = z_pred + weights_(i) * z_sig.col(i);
-  }
-  
-  //calculate innovation covariance matrix S
-  S.fill(0.0);
-  for (int i = 0; i < 2 * n_aug_ + 1; i++)
-  { 
-    //residual
-    eig_vec z_diff = z_sig.col(i) - z_pred;
+  CalcInnovCovMat(z_sig, z_pred, S);
 
-    //angle normalization
-    while (z_diff(1)> M_PI) z_diff(1)-=2.*M_PI;
-    while (z_diff(1)<-M_PI) z_diff(1)+=2.*M_PI;
-
-    S = S + weights_(i) * z_diff * z_diff.transpose();
-  }
-  
-  auto R = eig_mat(n_z_radar_, n_z_radar_);
-  R << std_radr_*std_radr_, 0, 0,
-      0, std_radphi_*std_radphi_, 0,
-      0, 0,std_radrd_*std_radrd_;
-  S = S + R;
+  S = S + R_radar_;
 }
 
 void UKF::PredictLaserMeasurement(const eig_mat& z_sig, eig_vec& z_pred, eig_mat& S) {
+  CalcInnovCovMat(z_sig, z_pred, S);
+  
+  S = S + R_laser_;
+}
+
+void UKF::CalcInnovCovMat(const eig_mat& z_sig, eig_vec& z_pred, eig_mat& S) {
   //calculate mean predicted measurement
   z_pred.fill(0.0);
   for (int i = 0; i < 2 * n_aug_ + 1; i++)
@@ -350,9 +347,4 @@ void UKF::PredictLaserMeasurement(const eig_mat& z_sig, eig_vec& z_pred, eig_mat
 
     S = S + weights_(i) * z_diff * z_diff.transpose();
   }
-  
-  auto R = eig_mat(n_z_laser_, n_z_laser_);
-  R << std_laspx_*std_laspx_, 0,
-      0, std_laspy_*std_laspy_;
-  S = S + R;
 }
